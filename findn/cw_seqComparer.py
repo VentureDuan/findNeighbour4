@@ -18,7 +18,15 @@ import copy
 import random
 from sqlite3 import IntegrityError
 import numpy as np
-from scipy.stats import binom_test
+# 兼容性处理：scipy 1.7+ 移除了 binom_test，使用 binomtest 替代
+try:
+    from scipy.stats import binom_test
+except ImportError:
+    from scipy.stats import binomtest
+    def binom_test(k, n, p, alternative='two-sided'):
+        """兼容性包装函数，将 binom_test 转换为 binomtest"""
+        result = binomtest(k, n, p, alternative=alternative)
+        return result.pvalue
 import pandas as pd
 import logging
 import progressbar

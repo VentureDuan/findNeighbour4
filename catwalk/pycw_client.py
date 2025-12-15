@@ -57,7 +57,7 @@ class CatWalkServerDeleteError(Exception):
 class CatWalkServerDidNotStartError(Exception):
     """the catwalk server did not start"""
 
-    def __init__(self, expression, message):
+    def __init__(self, expression=None, message="Catwalk server did not start"):
         self.expression = expression
         self.message = message
 
@@ -191,12 +191,20 @@ in either
 
         servers = []
         for proc in psutil.process_iter():
-            if "cw_server" in proc.name():
+            try:
+                pname = proc.name()
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+            if "cw_server" not in pname:
+                continue
+            try:
                 cmdline_parts = proc.cmdline()
-                for i, cmdline_part in enumerate(proc.cmdline()):
-                    if cmdline_part == "--instance_name":
-                        if cmdline_parts[i + 1].startswith(self.instance_stem):
-                            servers.append(cmdline_parts)
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+            for i, cmdline_part in enumerate(cmdline_parts):
+                if cmdline_part == "--instance_name":
+                    if cmdline_parts[i + 1].startswith(self.instance_stem):
+                        servers.append(cmdline_parts)
         return servers
 
     def server_is_running(self):
@@ -270,10 +278,15 @@ in either
 
             time.sleep(1)  # short break to ensure it has started
 
-        # check there is exactly one running.
-        # will raise an error otherwise
+        # check there is exactly one running; allow a few retries after spawn
+        for _ in range(3):
+            if self.server_is_running():
+                break
+            time.sleep(1)
         if self.server_is_running() is False:
-            raise CatWalkServerDidNotStartError()
+            raise CatWalkServerDidNotStartError(
+                message="Catwalk did not start after spawn retries"
+            )
 
         info = self.info()  # functional test: test responsiveness
         if info is None:
@@ -297,12 +310,20 @@ in either
         where the hash is the hash on an 'identity token' passed to the constructor, see above."""
 
         for proc in psutil.process_iter():
-            if "cw_server" in proc.name():
+            try:
+                pname = proc.name()
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+            if "cw_server" not in pname:
+                continue
+            try:
                 cmdline_parts = proc.cmdline()
-                for i, cmdline_part in enumerate(proc.cmdline()):
-                    if cmdline_part == "--instance_name":
-                        if cmdline_parts[i + 1].startswith(self.instance_stem):
-                            proc.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+            for i, cmdline_part in enumerate(cmdline_parts):
+                if cmdline_part == "--instance_name":
+                    if cmdline_parts[i + 1].startswith(self.instance_stem):
+                        proc.kill()
         if self.server_is_running():
             warnings.warn(
                 "Attempt to shutdown a catwalk process with name cw_server and --instance_name beginning with {0} failed.  It may be that another process (with a different instance name) is running on port {1}.  Review running processes (ps x) and kill residual processes on this port  manually if appropriate".format(
@@ -317,9 +338,17 @@ in either
         """stops all catwalk servers"""
         nKilled = 0
         for proc in psutil.process_iter():
-            if "cw_server" in proc.name():
+            try:
+                pname = proc.name()
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+            if "cw_server" not in pname:
+                continue
+            try:
                 proc.kill()
                 nKilled += 1
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
         if nKilled > 0:
             warnings.warn(
                 "Catwalk client.stop_all() executed. Kill instruction issues on {0} processes.  Beware, this will kill all cw_server processes on the server, not any specific one".format(
@@ -418,8 +447,17 @@ in either
         j = r.json()
         return [(sample_name, int(distance_str)) for (sample_name, distance_str) in j]
 
-    def sample_names(self):
-        """get a list of samples in catwalk"""
-        r = requests.get("{0}/list_samples".format(self.cw_url))
-        r.raise_for_status()
-        return r.json()
+    def sample_names(self, retries=5, delay=1):
+        """get a list of samples in catwalk with retries to handle cold-start race"""
+        url = "{0}/list_samples".format(self.cw_url)
+        last_err = None
+        for _ in range(retries):
+            try:
+                r = requests.get(url, timeout=5)
+                r.raise_for_status()
+                return r.json()
+            except requests.exceptions.RequestException as exc:
+                last_err = exc
+                time.sleep(delay)
+        # still failing after retries -> raise last error
+        raise last_err

@@ -217,17 +217,28 @@ class ConfigManager:
             self._first_run(do_not_persist_keys)
 
         # load the result from database
-        stored_config = self.PERSIST.config_read("config")
+        stored_config = self.PERSIST.config_read("config") or {}
+        exclude_positions = stored_config.get("excludePositions") or []
+        stored_config["excludePositions"] = set(exclude_positions)
 
-        stored_config["excludePositions"] = set(stored_config["excludePositions"])
-        for (
-            key
-        ) in (
-            do_not_persist_keys
-        ):  # update stored config with any of the do_not_persist_keys
+        # ensure all keys from file CONFIG are present; DB values take precedence
+        for key, value in self.CONFIG.items():
+            if key not in stored_config:
+                stored_config[key] = value
+
+        # update stored config with any of the do_not_persist_keys from current CONFIG
+        for key in do_not_persist_keys:
             if key in self.CONFIG.keys():
                 stored_config[key] = self.CONFIG[key]
+
         self.CONFIG = stored_config
+
+        # ensure reference sequence present; if missing, load from INPUTREF
+        if not self.CONFIG.get("reference"):
+            with open(self.CONFIG["INPUTREF"], "rt") as f:
+                for r in SeqIO.parse(f, "fasta"):
+                    self.CONFIG["reference"] = str(r.seq)
+                    break
 
         # set min logging interval if not supplied
         if "SERVER_MONITORING_MIN_INTERVAL_MSEC" not in self.CONFIG.keys():

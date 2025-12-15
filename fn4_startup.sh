@@ -82,7 +82,8 @@ echo $SRVLOG
 echo $CLUSTLOG
 
 echo "Starting server with prespecified worker processes (remove --n_workers X from fn4_startup.sh to autopick number of workers)"
-pipenv run python3 fn4_configure.py $1 --startup --n_workers 8 > $LAUNCHSCRIPT
+# 默认使用 1 个 worker，避免多进程启动时的资源/锁竞争
+pipenv run python3 fn4_configure.py $1 --startup --n_workers 1 > $LAUNCHSCRIPT
 chmod +x $LAUNCHSCRIPT
 
 echo "running $LAUNCHSCRIPT to start gunicorn based server"
